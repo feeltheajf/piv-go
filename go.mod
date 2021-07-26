@@ -1,3 +1,3 @@
-module github.com/go-piv/piv-go
+module github.com/feeltheajf/piv-go
 
-go 1.13
+go 1.16
