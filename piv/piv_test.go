@@ -49,16 +49,6 @@ func testGetVersion(t *testing.T, h *scHandle) {
 	}
 }
 
-func supportsVersion(v Version, major, minor, patch int) bool {
-	if v.Major != major {
-		return v.Major > major
-	}
-	if v.Minor != minor {
-		return v.Minor > minor
-	}
-	return v.Patch >= patch
-}
-
 func testRequiresVersion(t *testing.T, yk *YubiKey, major, minor, patch int) {
 	v := yk.Version()
 	if !supportsVersion(v, major, minor, patch) {
@@ -190,7 +180,7 @@ func TestYubiKeyReset(t *testing.T) {
 	if err := yk.Reset(); err != nil {
 		t.Fatalf("resetting yubikey: %v", err)
 	}
-	if err := yk.authPIN(DefaultPIN); err != nil {
+	if err := yk.VerifyPIN(DefaultPIN); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 }
@@ -199,7 +189,7 @@ func TestYubiKeyLogin(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
 
-	if err := yk.authPIN(DefaultPIN); err != nil {
+	if err := yk.VerifyPIN(DefaultPIN); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 }

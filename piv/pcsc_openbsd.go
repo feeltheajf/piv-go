@@ -26,5 +26,5 @@ func scCheck(rc C.long) error {
 }
 
 func isRCNoReaders(rc C.long) bool {
-	return uint32(rc) == 0x8010002E
+	return rc == 0x8010002E
 }
