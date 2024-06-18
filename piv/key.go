@@ -32,7 +32,7 @@ import (
 	"strconv"
 	"strings"
 
-	rsafork "github.com/go-piv/piv-go/third_party/rsa"
+	rsafork "github.com/feeltheajf/piv-go/third_party/rsa"
 )
 
 // errMismatchingAlgorithms is returned when a cryptographic operation
