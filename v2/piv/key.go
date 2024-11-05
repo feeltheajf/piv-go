@@ -17,6 +17,7 @@ package piv
 import (
 	"bytes"
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -32,7 +33,11 @@ import (
 	"strconv"
 	"strings"
 
+<<<<<<< HEAD:piv/key.go
 	rsafork "github.com/feeltheajf/piv-go/third_party/rsa"
+=======
+	rsafork "github.com/go-piv/piv-go/v2/third_party/rsa"
+>>>>>>> 2fae46569ad594c2c4bdd57f696967ac396e1d5e:v2/piv/key.go
 )
 
 // errMismatchingAlgorithms is returned when a cryptographic operation
@@ -439,8 +444,6 @@ type Algorithm int
 // Algorithms supported by this package. Note that not all cards will support
 // every algorithm.
 //
-// AlgorithmEd25519 is currently only implemented by SoloKeys.
-//
 // For algorithm discovery, see: https://github.com/ericchiang/piv-go/issues/1
 const (
 	AlgorithmEC256 Algorithm = iota + 1
@@ -448,6 +451,9 @@ const (
 	AlgorithmEd25519
 	AlgorithmRSA1024
 	AlgorithmRSA2048
+	AlgorithmRSA3072
+	AlgorithmRSA4096
+	AlgorithmX25519
 )
 
 // PINPolicy represents PIN requirements when signing or decrypting with an
@@ -531,6 +537,9 @@ var algorithmsMap = map[Algorithm]byte{
 	AlgorithmEd25519: algEd25519,
 	AlgorithmRSA1024: algRSA1024,
 	AlgorithmRSA2048: algRSA2048,
+	AlgorithmRSA3072: algRSA3072,
+	AlgorithmRSA4096: algRSA4096,
+	AlgorithmX25519:  algX25519,
 }
 
 var algorithmsMapInv = map[byte]Algorithm{
@@ -539,6 +548,9 @@ var algorithmsMapInv = map[byte]Algorithm{
 	algEd25519: AlgorithmEd25519,
 	algRSA1024: AlgorithmRSA1024,
 	algRSA2048: AlgorithmRSA2048,
+	algRSA3072: AlgorithmRSA3072,
+	algRSA4096: AlgorithmRSA4096,
+	algX25519:  AlgorithmX25519,
 }
 
 // AttestationCertificate returns the YubiKey's attestation certificate, which
@@ -743,8 +755,8 @@ func marshalASN1(tag byte, data []byte) []byte {
 // SetCertificate stores a certificate object in the provided slot. Setting a
 // certificate isn't required to use the associated key for signing or
 // decryption.
-func (yk *YubiKey) SetCertificate(key [24]byte, slot Slot, cert *x509.Certificate) error {
-	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
+func (yk *YubiKey) SetCertificate(key []byte, slot Slot, cert *x509.Certificate) error {
+	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.version); err != nil {
 		return fmt.Errorf("authenticating with management key: %w", err)
 	}
 	if err := ykStoreCertificate(yk.tx, slot, cert); err != nil {
@@ -800,8 +812,8 @@ type Key struct {
 
 // GenerateKey generates an asymmetric key on the card, returning the key's
 // public key.
-func (yk *YubiKey) GenerateKey(key [24]byte, slot Slot, opts Key) (crypto.PublicKey, error) {
-	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
+func (yk *YubiKey) GenerateKey(key []byte, slot Slot, opts Key) (crypto.PublicKey, error) {
+	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.version); err != nil {
 		return nil, fmt.Errorf("authenticating with management key: %w", err)
 	}
 	return ykGenerateKey(yk.tx, slot, opts)
@@ -849,7 +861,7 @@ func ykGenerateKey(tx *scTx, slot Slot, o Key) (crypto.PublicKey, error) {
 func decodePublic(b []byte, alg Algorithm) (crypto.PublicKey, error) {
 	var curve elliptic.Curve
 	switch alg {
-	case AlgorithmRSA1024, AlgorithmRSA2048:
+	case AlgorithmRSA1024, AlgorithmRSA2048, AlgorithmRSA3072, AlgorithmRSA4096:
 		pub, err := decodeRSAPublic(b)
 		if err != nil {
 			return nil, fmt.Errorf("decoding rsa public key: %v", err)
@@ -863,6 +875,12 @@ func decodePublic(b []byte, alg Algorithm) (crypto.PublicKey, error) {
 		pub, err := decodeEd25519Public(b)
 		if err != nil {
 			return nil, fmt.Errorf("decoding ed25519 public key: %v", err)
+		}
+		return pub, nil
+	case AlgorithmX25519:
+		pub, err := decodeX25519Public(b)
+		if err != nil {
+			return nil, fmt.Errorf("decoding X25519 public key: %v", err)
 		}
 		return pub, nil
 	default:
@@ -929,7 +947,7 @@ func (k KeyAuth) do(yk *YubiKey, pp PINPolicy, f func(tx *scTx) ([]byte, error))
 }
 
 func pinPolicy(yk *YubiKey, slot Slot) (PINPolicy, error) {
-	if supportsVersion(yk.Version(), 5, 3, 0) {
+	if supportsVersion(yk.version, 5, 3, 0) {
 		info, err := yk.KeyInfo(slot)
 		if err != nil {
 			return 0, fmt.Errorf("get key info: %v", err)
@@ -993,6 +1011,11 @@ func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) 
 		return &keyEd25519{yk, slot, pub, auth, pp}, nil
 	case *rsa.PublicKey:
 		return &keyRSA{yk, slot, pub, auth, pp}, nil
+	case *ecdh.PublicKey:
+		if crv := pub.Curve(); crv != ecdh.X25519() {
+			return nil, fmt.Errorf("unsupported ecdh curve: %v", crv)
+		}
+		return &X25519PrivateKey{yk, slot, pub, auth, pp}, nil
 	default:
 		return nil, fmt.Errorf("unsupported public key type: %T", public)
 	}
@@ -1008,7 +1031,7 @@ func (yk *YubiKey) PrivateKey(slot Slot, public crypto.PublicKey, auth KeyAuth) 
 // Keys generated outside of the YubiKey should not be considered hardware-backed,
 // as there's no way to prove the key wasn't copied, exfiltrated, or replaced with malicious
 // material before being imported.
-func (yk *YubiKey) SetPrivateKeyInsecure(key [24]byte, slot Slot, private crypto.PrivateKey, policy Key) error {
+func (yk *YubiKey) SetPrivateKeyInsecure(key []byte, slot Slot, private crypto.PrivateKey, policy Key) error {
 	// Reference implementation
 	// https://github.com/Yubico/yubico-piv-tool/blob/671a5740ef09d6c5d9d33f6e5575450750b58bde/lib/ykpiv.c#L1812
 
@@ -1027,6 +1050,12 @@ func (yk *YubiKey) SetPrivateKeyInsecure(key [24]byte, slot Slot, private crypto
 		case 2048:
 			policy.Algorithm = AlgorithmRSA2048
 			elemLen = 128
+		case 3072:
+			policy.Algorithm = AlgorithmRSA3072
+			elemLen = 192
+		case 4096:
+			policy.Algorithm = AlgorithmRSA4096
+			elemLen = 256
 		default:
 			return errUnsupportedKeySize
 		}
@@ -1059,8 +1088,25 @@ func (yk *YubiKey) SetPrivateKeyInsecure(key [24]byte, slot Slot, private crypto
 		copy(privateKey[padding:], valueBytes)
 
 		params = append(params, privateKey)
+	case ed25519.PrivateKey:
+		paramTag = 0x07
+		elemLen = ed25519.SeedSize
+
+		// seed
+		privateKey := make([]byte, elemLen)
+		copy(privateKey, priv[:32])
+		params = append(params, privateKey)
+	case *ecdh.PrivateKey:
+		if crv := priv.Curve(); crv != ecdh.X25519() {
+			return fmt.Errorf("unsupported ecdh curve: %v", crv)
+		}
+		paramTag = 0x08
+		elemLen = 32
+
+		// seed
+		params = append(params, priv.Bytes())
 	default:
-		return errors.New("unsupported private key type")
+		return fmt.Errorf("unsupported private key type: %T", private)
 	}
 
 	elemLenASN1 := marshalASN1Length(uint64(elemLen))
@@ -1076,7 +1122,7 @@ func (yk *YubiKey) SetPrivateKeyInsecure(key [24]byte, slot Slot, private crypto
 		tags = append(tags, param...)
 	}
 
-	if err := ykAuthenticate(yk.tx, key, yk.rand); err != nil {
+	if err := ykAuthenticate(yk.tx, key, yk.rand, yk.version); err != nil {
 		return fmt.Errorf("authenticating with management key: %w", err)
 	}
 
@@ -1154,10 +1200,31 @@ func (k *ECDSAPrivateKey) Sign(rand io.Reader, digest []byte, opts crypto.Signer
 // used for the operation. Callers should use a cryptographic key
 // derivation function to extract the amount of bytes they need.
 func (k *ECDSAPrivateKey) SharedKey(peer *ecdsa.PublicKey) ([]byte, error) {
-	if peer.Curve.Params().BitSize != k.pub.Curve.Params().BitSize {
+	peerECDH, err := peer.ECDH()
+	if err != nil {
+		return nil, unsupportedCurveError{curve: peer.Params().BitSize}
+	}
+	return k.ECDH(peerECDH)
+}
+
+// ECDH performs a Diffie-Hellman key agreement with the peer
+// to produce a shared secret key.
+//
+// Peer's public key must use the same algorithm as the key in
+// this slot, or an error will be returned.
+//
+// Length of the result depends on the types and sizes of the keys
+// used for the operation. Callers should use a cryptographic key
+// derivation function to extract the amount of bytes they need.
+func (k *ECDSAPrivateKey) ECDH(peer *ecdh.PublicKey) ([]byte, error) {
+	ourECDH, err := k.pub.ECDH()
+	if err != nil {
+		return nil, unsupportedCurveError{curve: k.pub.Params().BitSize}
+	}
+	if peer.Curve() != ourECDH.Curve() {
 		return nil, errMismatchingAlgorithms
 	}
-	msg := elliptic.Marshal(peer.Curve, peer.X, peer.Y)
+	msg := peer.Bytes()
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
 		var alg byte
 		size := k.pub.Params().BitSize
@@ -1196,6 +1263,33 @@ func (k *ECDSAPrivateKey) SharedKey(peer *ecdsa.PublicKey) ([]byte, error) {
 	})
 }
 
+// X25519PrivateKey is a crypto.PrivateKey implementation for X25519 keys. It
+// implements the method ECDH to perform Diffie-Hellman key agreements.
+//
+// Keys returned by YubiKey.PrivateKey() may be type asserted to
+// *X25519PrivateKey, if the slot contains an X25519 key.
+type X25519PrivateKey struct {
+	yk   *YubiKey
+	slot Slot
+	pub  *ecdh.PublicKey
+	auth KeyAuth
+	pp   PINPolicy
+}
+
+func (k *X25519PrivateKey) Public() crypto.PublicKey {
+	return k.pub
+}
+
+// ECDH performs an ECDH exchange and returns the shared secret.
+//
+// Peer's public key must use the same algorithm as the key in this slot, or an
+// error will be returned.
+func (k *X25519PrivateKey) ECDH(peer *ecdh.PublicKey) ([]byte, error) {
+	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
+		return ykECDHX25519(tx, k.slot, k.pub, peer)
+	})
+}
+
 type keyEd25519 struct {
 	yk   *YubiKey
 	slot Slot
@@ -1208,9 +1302,9 @@ func (k *keyEd25519) Public() crypto.PublicKey {
 	return k.pub
 }
 
-func (k *keyEd25519) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
+func (k *keyEd25519) Sign(rand io.Reader, message []byte, opts crypto.SignerOpts) ([]byte, error) {
 	return k.auth.do(k.yk, k.pp, func(tx *scTx) ([]byte, error) {
-		return skSignEd25519(tx, k.slot, k.pub, digest)
+		return ykSignEd25519(tx, k.slot, k.pub, message, opts)
 	})
 }
 
@@ -1281,9 +1375,46 @@ func ykSignECDSA(tx *scTx, slot Slot, pub *ecdsa.PublicKey, digest []byte) ([]by
 	return rs, nil
 }
 
-// This function only works on SoloKeys prototypes and other PIV devices that choose
-// to implement Ed25519 signatures under alg 0x22.
-func skSignEd25519(tx *scTx, slot Slot, pub ed25519.PublicKey, digest []byte) ([]byte, error) {
+func ykECDHX25519(tx *scTx, slot Slot, pub *ecdh.PublicKey, peer *ecdh.PublicKey) ([]byte, error) {
+	if crv := pub.Curve(); crv != ecdh.X25519() {
+		return nil, fmt.Errorf("unsupported ecdh curve: %v", crv)
+	}
+	if pub.Curve() != peer.Curve() {
+		return nil, errMismatchingAlgorithms
+	}
+	cmd := apdu{
+		instruction: insAuthenticate,
+		param1:      algX25519,
+		param2:      byte(slot.Key),
+		data: marshalASN1(0x7c,
+			append([]byte{0x82, 0x00},
+				marshalASN1(0x85, peer.Bytes())...)),
+	}
+	resp, err := tx.Transmit(cmd)
+	if err != nil {
+		return nil, fmt.Errorf("command failed: %w", err)
+	}
+
+	sig, _, err := unmarshalASN1(resp, 1, 0x1c) // 0x7c
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal response: %v", err)
+	}
+	sharedSecret, _, err := unmarshalASN1(sig, 2, 0x02) // 0x82
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal response signature: %v", err)
+	}
+
+	return sharedSecret, nil
+}
+
+func ykSignEd25519(tx *scTx, slot Slot, pub ed25519.PublicKey, message []byte, opts crypto.SignerOpts) ([]byte, error) {
+	if opts.HashFunc() != crypto.Hash(0) {
+		return nil, fmt.Errorf("ed25519ph not supported")
+	}
+	if ed25519opts, ok := opts.(*ed25519.Options); ok && ed25519opts.Context != "" {
+		return nil, fmt.Errorf("ed25519ctx not supported")
+	}
+
 	// Adaptation of
 	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=118
 	cmd := apdu{
@@ -1292,7 +1423,7 @@ func skSignEd25519(tx *scTx, slot Slot, pub ed25519.PublicKey, digest []byte) ([
 		param2:      byte(slot.Key),
 		data: marshalASN1(0x7c,
 			append([]byte{0x82, 0x00},
-				marshalASN1(0x81, digest)...)),
+				marshalASN1(0x81, message)...)),
 	}
 	resp, err := tx.Transmit(cmd)
 	if err != nil {
@@ -1378,6 +1509,16 @@ func decodeRSAPublic(b []byte) (*rsa.PublicKey, error) {
 	return &rsa.PublicKey{N: &n, E: int(e.Int64())}, nil
 }
 
+func decodeX25519Public(b []byte) (*ecdh.PublicKey, error) {
+	// Adaptation of
+	// https://nvlpubs.nist.gov/nistpubs/SpecialPublications/NIST.SP.800-73-4.pdf#page=95
+	p, _, err := unmarshalASN1(b, 2, 0x06)
+	if err != nil {
+		return nil, fmt.Errorf("unmarshal points: %v", err)
+	}
+	return ecdh.X25519().NewPublicKey(p)
+}
+
 func rsaAlg(pub *rsa.PublicKey) (byte, error) {
 	size := pub.N.BitLen()
 	switch size {
@@ -1385,6 +1526,10 @@ func rsaAlg(pub *rsa.PublicKey) (byte, error) {
 		return algRSA1024, nil
 	case 2048:
 		return algRSA2048, nil
+	case 3072:
+		return algRSA3072, nil
+	case 4096:
+		return algRSA4096, nil
 	default:
 		return 0, fmt.Errorf("unsupported rsa key size: %d", size)
 	}

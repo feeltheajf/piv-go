@@ -2,7 +2,7 @@ This is not an officially supported Google product
 
 # A Go YubiKey PIV implementation
 
-[![GoDoc](https://godoc.org/github.com/go-piv/piv-go/piv?status.svg)](https://godoc.org/github.com/go-piv/piv-go/piv)
+[![Go Reference](https://pkg.go.dev/badge/github.com/go-piv/piv-go/v2/piv.svg)](https://pkg.go.dev/github.com/go-piv/piv-go/v2/piv)
 
 YubiKeys implement the PIV specification for managing smart card certificates.
 This applet is a simpler alternative to GPG for managing asymmetric keys on a
@@ -14,6 +14,13 @@ a wrapper for YubiKey's ykpiv.h C library. This package aims to provide:
 * Better error messages
 * Idiomatic Go APIs
 * Modern features such as PIN protected management keys
+
+V2 of this package was released in 2024 to support newer kinds of management
+keys, and is now the default branch for new features. The import path is:
+
+```
+import "github.com/go-piv/piv-go/v2/piv"
+```
 
 ## Examples
 
@@ -75,6 +82,7 @@ if err != nil {
 The PIV applet has three unique credentials:
 
 * Management key (3DES key) used to generate new keys on the YubiKey.
+	* YubiKey firmware 5.4.0+ adds support for AES128/192/256 keys
 * PIN (up to 8 digits, usually 6) used to access signing operations.
 * PUK (up to 8 digits) used to unblock the PIN. Usually set once and thrown
   away or managed by an administrator.
@@ -94,15 +102,21 @@ newPUKInt, err := rand.Int(rand.Reader, big.NewInt(100_000_000))
 if err != nil {
 	// ...
 }
-var newKey [24]byte
-if _, err := io.ReadFull(rand.Reader, newKey[:]); err != nil {
+newKey := make([]byte, 24)
+if _, err := io.ReadFull(rand.Reader, newKey); err != nil {
 	// ...
 }
 // Format with leading zeros.
 newPIN := fmt.Sprintf("%06d", newPINInt)
 newPUK := fmt.Sprintf("%08d", newPUKInt)
 
-// Set all values to a new value.
+// If you want to change PIN/PUK retries, it's recommended to do it BEFORE changing
+// the PIN/PUK, as SetRetries will reset PIN/PUK to their default values.
+if err := yk.SetRetries(piv.DefaultManagementKey, piv.DefaultPIN, 5, 4); err != nil {
+	// ...
+}
+
+// Set all values to a new value. 
 if err := yk.SetManagementKey(piv.DefaultManagementKey, newKey); err != nil {
 	// ...
 }

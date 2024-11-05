@@ -17,12 +17,14 @@ package piv
 import (
 	"bytes"
 	"crypto"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/sha512"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -84,6 +86,71 @@ func TestYubiKeySignECDSA(t *testing.T) {
 	}
 }
 
+func TestYubiKeyECDSAECDH(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	defer close()
+
+	slot := SlotAuthentication
+
+	key := Key{
+		Algorithm:   AlgorithmEC256,
+		TouchPolicy: TouchPolicyNever,
+		PINPolicy:   PINPolicyNever,
+	}
+	pubKey, err := yk.GenerateKey(DefaultManagementKey, slot, key)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	pub, ok := pubKey.(*ecdsa.PublicKey)
+	if !ok {
+		t.Fatalf("public key is not an ecdsa key")
+	}
+	pubECDH, err := pub.ECDH()
+	if err != nil {
+		t.Fatalf("converting pubkey to ECDH key: %v", err)
+	}
+	priv, err := yk.PrivateKey(slot, pub, KeyAuth{})
+	if err != nil {
+		t.Fatalf("getting private key: %v", err)
+	}
+	privECDSA, ok := priv.(*ECDSAPrivateKey)
+	if !ok {
+		t.Fatalf("expected private key to be ECDSA private key")
+	}
+
+	t.Run("good", func(t *testing.T) {
+		privECDH, err := ecdh.P256().GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("cannot generate key: %v", err)
+		}
+		secret1, err := privECDH.ECDH(pubECDH)
+		if err != nil {
+			t.Fatalf("key agreement 1 failed: %v", err)
+		}
+
+		secret2, err := privECDSA.ECDH(privECDH.PublicKey())
+		if err != nil {
+			t.Fatalf("key agreement 2 failed: %v", err)
+		}
+		if !bytes.Equal(secret1, secret2) {
+			t.Errorf("key agreement didn't match")
+		}
+	})
+
+	t.Run("bad", func(t *testing.T) {
+		t.Run("size", func(t *testing.T) {
+			privECDH, err := ecdh.P384().GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatalf("cannot generate key: %v", err)
+			}
+			_, err = privECDSA.ECDH(privECDH.PublicKey())
+			if !errors.Is(err, errMismatchingAlgorithms) {
+				t.Fatalf("unexpected error value: wanted errMismatchingAlgorithms: %v", err)
+			}
+		})
+	})
+}
+
 func TestYubiKeyECDSASharedKey(t *testing.T) {
 	yk, close := newTestYubiKey(t)
 	defer close()
@@ -140,6 +207,125 @@ func TestYubiKeyECDSASharedKey(t *testing.T) {
 				t.Fatalf("unexpected error value: wanted errMismatchingAlgorithms: %v", err)
 			}
 		})
+	})
+}
+
+func TestYubiKeyX25519ECDH(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	defer close()
+
+	slot := SlotAuthentication
+
+	key := Key{
+		Algorithm:   AlgorithmX25519,
+		TouchPolicy: TouchPolicyNever,
+		PINPolicy:   PINPolicyNever,
+	}
+	pubKey, err := yk.GenerateKey(DefaultManagementKey, slot, key)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	pub, ok := pubKey.(*ecdh.PublicKey)
+	if !ok {
+		t.Fatalf("public key is not an ecdh key")
+	}
+	priv, err := yk.PrivateKey(slot, pub, KeyAuth{})
+	if err != nil {
+		t.Fatalf("getting private key: %v", err)
+	}
+	privX25519, ok := priv.(*X25519PrivateKey)
+	if !ok {
+		t.Fatalf("expected private key to be X25519 private key")
+	}
+
+	t.Run("good", func(t *testing.T) {
+		peer, err := ecdh.X25519().GenerateKey(rand.Reader)
+		if err != nil {
+			t.Fatalf("cannot generate key: %v", err)
+		}
+
+		secret1, err := privX25519.ECDH(peer.PublicKey())
+		if err != nil {
+			t.Fatalf("key agreement failed: %v", err)
+		}
+		secret2, err := peer.ECDH(pub)
+		if err != nil {
+			t.Fatalf("key agreement failed: %v", err)
+		}
+		if !bytes.Equal(secret1, secret2) {
+			t.Errorf("key agreement didn't match")
+		}
+	})
+
+	t.Run("bad", func(t *testing.T) {
+		t.Run("curve", func(t *testing.T) {
+			peer, err := ecdh.P256().GenerateKey(rand.Reader)
+			if err != nil {
+				t.Fatalf("cannot generate key: %v", err)
+			}
+			_, err = privX25519.ECDH(peer.PublicKey())
+			if !errors.Is(err, errMismatchingAlgorithms) {
+				t.Fatalf("unexpected error value: wanted errMismatchingAlgorithms: %v", err)
+			}
+		})
+	})
+}
+
+func TestYubiKeySignEd25519(t *testing.T) {
+	yk, close := newTestYubiKey(t)
+	defer close()
+	testRequiresVersion(t, yk, version57)
+
+	if err := yk.Reset(); err != nil {
+		t.Fatalf("reset yubikey: %v", err)
+	}
+
+	slot := SlotAuthentication
+
+	key := Key{
+		Algorithm:   AlgorithmEd25519,
+		TouchPolicy: TouchPolicyNever,
+		PINPolicy:   PINPolicyNever,
+	}
+	pubKey, err := yk.GenerateKey(DefaultManagementKey, slot, key)
+	if err != nil {
+		t.Fatalf("generating key: %v", err)
+	}
+	pub, ok := pubKey.(ed25519.PublicKey)
+	if !ok {
+		t.Fatalf("public key is not an ecdsa key")
+	}
+	data := []byte("hello")
+	priv, err := yk.PrivateKey(slot, pub, KeyAuth{})
+	if err != nil {
+		t.Fatalf("getting private key: %v", err)
+	}
+	s, ok := priv.(crypto.Signer)
+	if !ok {
+		t.Fatalf("expected private key to implement crypto.Signer")
+	}
+
+	t.Run("good", func(t *testing.T) {
+		sig, err := s.Sign(rand.Reader, data, crypto.Hash(0))
+		if err != nil {
+			t.Fatalf("signing failed: %v", err)
+		}
+		if !ed25519.Verify(pub, data, sig) {
+			t.Errorf("signature didn't match")
+		}
+	})
+	t.Run("unsupported_ed25519ph", func(t *testing.T) {
+		digest := sha512.Sum512(data)
+		_, err := s.Sign(rand.Reader, digest[:], crypto.SHA512)
+		if err == nil {
+			t.Fatalf("expected signing with Ed25519ph to fail")
+		}
+	})
+	t.Run("unsupported_ed25519ctx", func(t *testing.T) {
+		_, err := s.Sign(rand.Reader, data, &ed25519.Options{Context: "test"})
+		if err == nil {
+			t.Fatalf("expected signing with Ed25519ctx to fail")
+		}
 	})
 }
 
@@ -202,7 +388,7 @@ func TestPINPrompt(t *testing.T) {
 }
 
 func supportsAttestation(yk *YubiKey) bool {
-	return supportsVersion(yk.Version(), 4, 3, 0)
+	return supportsVersion(yk.version, 4, 3, 0)
 }
 
 func TestSlots(t *testing.T) {
@@ -290,12 +476,15 @@ func TestSlots(t *testing.T) {
 
 func TestYubiKeySignRSA(t *testing.T) {
 	tests := []struct {
-		name string
-		alg  Algorithm
-		long bool
+		name    string
+		alg     Algorithm
+		long    bool
+		version version
 	}{
-		{"rsa1024", AlgorithmRSA1024, false},
-		{"rsa2048", AlgorithmRSA2048, true},
+		{"rsa1024", AlgorithmRSA1024, false, version{}},
+		{"rsa2048", AlgorithmRSA2048, true, version{}},
+		{"rsa3072", AlgorithmRSA3072, true, version57},
+		{"rsa4096", AlgorithmRSA4096, true, version57},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -304,6 +493,7 @@ func TestYubiKeySignRSA(t *testing.T) {
 			}
 			yk, close := newTestYubiKey(t)
 			defer close()
+			testRequiresVersion(t, yk, test.version)
 			slot := SlotAuthentication
 			key := Key{
 				Algorithm:   test.alg,
@@ -340,12 +530,15 @@ func TestYubiKeySignRSA(t *testing.T) {
 
 func TestYubiKeySignRSAPSS(t *testing.T) {
 	tests := []struct {
-		name string
-		alg  Algorithm
-		long bool
+		name    string
+		alg     Algorithm
+		long    bool
+		version version
 	}{
-		{"rsa1024", AlgorithmRSA1024, false},
-		{"rsa2048", AlgorithmRSA2048, true},
+		{"rsa1024", AlgorithmRSA1024, false, version{}},
+		{"rsa2048", AlgorithmRSA2048, true, version{}},
+		{"rsa3072", AlgorithmRSA3072, true, version57},
+		{"rsa4096", AlgorithmRSA4096, true, version57},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -354,6 +547,7 @@ func TestYubiKeySignRSAPSS(t *testing.T) {
 			}
 			yk, close := newTestYubiKey(t)
 			defer close()
+			testRequiresVersion(t, yk, test.version)
 			slot := SlotAuthentication
 			key := Key{
 				Algorithm:   test.alg,
@@ -513,12 +707,15 @@ func TestTLS13(t *testing.T) {
 
 func TestYubiKeyDecryptRSA(t *testing.T) {
 	tests := []struct {
-		name string
-		alg  Algorithm
-		long bool
+		name    string
+		alg     Algorithm
+		long    bool
+		version version
 	}{
-		{"rsa1024", AlgorithmRSA1024, false},
-		{"rsa2048", AlgorithmRSA2048, true},
+		{"rsa1024", AlgorithmRSA1024, false, version{}},
+		{"rsa2048", AlgorithmRSA2048, true, version{}},
+		{"rsa3072", AlgorithmRSA3072, true, version57},
+		{"rsa4096", AlgorithmRSA4096, true, version57},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -527,6 +724,7 @@ func TestYubiKeyDecryptRSA(t *testing.T) {
 			}
 			yk, close := newTestYubiKey(t)
 			defer close()
+			testRequiresVersion(t, yk, test.version)
 			slot := SlotAuthentication
 			key := Key{
 				Algorithm:   test.alg,
@@ -576,7 +774,7 @@ func TestYubiKeyAttestation(t *testing.T) {
 		TouchPolicy: TouchPolicyNever,
 	}
 
-	testRequiresVersion(t, yk, 4, 3, 0)
+	testRequiresVersion(t, yk, version43)
 
 	cert, err := yk.AttestationCertificate()
 	if err != nil {
@@ -690,18 +888,20 @@ func TestYubiKeyStoreCertificate(t *testing.T) {
 
 func TestYubiKeyGenerateKey(t *testing.T) {
 	tests := []struct {
-		name string
-		alg  Algorithm
-		bits int
-		long bool // Does the key generation take a long time?
+		name    string
+		alg     Algorithm
+		bits    int
+		long    bool // Does the key generation take a long time?
+		version version
 	}{
 		{
 			name: "ec_256",
 			alg:  AlgorithmEC256,
 		},
 		{
-			name: "ec_384",
-			alg:  AlgorithmEC384,
+			name:    "ec_384",
+			alg:     AlgorithmEC384,
+			version: version43,
 		},
 		{
 			name: "rsa_1024",
@@ -712,6 +912,29 @@ func TestYubiKeyGenerateKey(t *testing.T) {
 			alg:  AlgorithmRSA2048,
 			long: true,
 		},
+		{
+			name: "rsa_2048",
+			alg:  AlgorithmRSA2048,
+			long: true,
+		},
+		{
+			name:    "rsa_3072",
+			alg:     AlgorithmRSA3072,
+			long:    true,
+			version: version57,
+		},
+		{
+			name:    "rsa_4096",
+			alg:     AlgorithmRSA4096,
+			long:    true,
+			version: version57,
+		},
+		{
+			name:    "ed25519",
+			alg:     AlgorithmEd25519,
+			long:    false,
+			version: version57,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -720,10 +943,7 @@ func TestYubiKeyGenerateKey(t *testing.T) {
 			}
 			yk, close := newTestYubiKey(t)
 			defer close()
-			if test.alg == AlgorithmEC384 {
-				testRequiresVersion(t, yk, 4, 3, 0)
-			}
-
+			testRequiresVersion(t, yk, test.version)
 			key := Key{
 				Algorithm:   test.alg,
 				TouchPolicy: TouchPolicyNever,
@@ -887,12 +1107,6 @@ func TestSetRSAPrivateKey(t *testing.T) {
 			bits:    2048,
 			slot:    SlotCardAuthentication,
 			wantErr: nil,
-		},
-		{
-			name:    "rsa 4096",
-			bits:    4096,
-			slot:    SlotAuthentication,
-			wantErr: errUnsupportedKeySize,
 		},
 		{
 			name:    "rsa 512",
@@ -1145,7 +1359,7 @@ func TestKeyInfo(t *testing.T) {
 		yk, close := newTestYubiKey(t)
 		defer close()
 
-		testRequiresVersion(t, yk, 5, 3, 0)
+		testRequiresVersion(t, yk, version53)
 
 		if err := yk.Reset(); err != nil {
 			t.Fatalf("resetting key: %v", err)
@@ -1157,102 +1371,179 @@ func TestKeyInfo(t *testing.T) {
 		slot      Slot
 		importKey privateKey
 		policy    Key
+		long      bool
+		version   version
 	}{
 		{
 			"Generated ec_256",
 			SlotAuthentication,
 			nil,
 			Key{AlgorithmEC256, PINPolicyNever, TouchPolicyNever},
+			false, version{},
 		},
 		{
 			"Generated ec_384",
 			SlotAuthentication,
 			nil,
 			Key{AlgorithmEC384, PINPolicyNever, TouchPolicyNever},
+			false, version43,
 		},
 		{
 			"Generated rsa_1024",
 			SlotAuthentication,
 			nil,
 			Key{AlgorithmRSA1024, PINPolicyNever, TouchPolicyNever},
+			false, version{},
 		},
 		{
 			"Generated rsa_2048",
 			SlotAuthentication,
 			nil,
 			Key{AlgorithmRSA2048, PINPolicyNever, TouchPolicyNever},
+			true, version{},
+		},
+		{
+			"Generated rsa_3072",
+			SlotAuthentication,
+			nil,
+			Key{AlgorithmRSA3072, PINPolicyNever, TouchPolicyNever},
+			true, version57,
+		},
+		{
+			"Generated rsa_4096",
+			SlotAuthentication,
+			nil,
+			Key{AlgorithmRSA4096, PINPolicyNever, TouchPolicyNever},
+			true, version57,
+		},
+		{
+			"Generated ed25517",
+			SlotAuthentication,
+			nil,
+			Key{AlgorithmEd25519, PINPolicyNever, TouchPolicyNever},
+			false, version57,
+		},
+		{
+			"Generated x25517",
+			SlotAuthentication,
+			nil,
+			Key{AlgorithmEd25519, PINPolicyNever, TouchPolicyNever},
+			false, version57,
 		},
 		{
 			"Imported ec_256",
 			SlotAuthentication,
 			ephemeralKey(t, AlgorithmEC256),
 			Key{AlgorithmEC256, PINPolicyNever, TouchPolicyNever},
+			false, version{},
 		},
 		{
 			"Imported ec_384",
 			SlotAuthentication,
 			ephemeralKey(t, AlgorithmEC384),
 			Key{AlgorithmEC384, PINPolicyNever, TouchPolicyNever},
+			false, version43,
 		},
 		{
 			"Imported rsa_1024",
 			SlotAuthentication,
 			ephemeralKey(t, AlgorithmRSA1024),
 			Key{AlgorithmRSA1024, PINPolicyNever, TouchPolicyNever},
+			false, version{},
 		},
 		{
 			"Imported rsa_2048",
 			SlotAuthentication,
 			ephemeralKey(t, AlgorithmRSA2048),
 			Key{AlgorithmRSA2048, PINPolicyNever, TouchPolicyNever},
+			false, version{},
+		},
+		{
+			"Imported rsa_3072",
+			SlotAuthentication,
+			ephemeralKey(t, AlgorithmRSA3072),
+			Key{AlgorithmRSA3072, PINPolicyNever, TouchPolicyNever},
+			false, version57,
+		},
+		{
+			"Imported rsa_4096",
+			SlotAuthentication,
+			ephemeralKey(t, AlgorithmRSA4096),
+			Key{AlgorithmRSA4096, PINPolicyNever, TouchPolicyNever},
+			false, version57,
+		},
+		{
+			"Imported ed25519",
+			SlotAuthentication,
+			ephemeralKey(t, AlgorithmEd25519),
+			Key{AlgorithmEd25519, PINPolicyNever, TouchPolicyNever},
+			false, version57,
+		},
+		{
+			"Imported x25519",
+			SlotAuthentication,
+			ephemeralKey(t, AlgorithmX25519),
+			Key{AlgorithmX25519, PINPolicyNever, TouchPolicyNever},
+			false, version57,
 		},
 		{
 			"PINPolicyOnce",
 			SlotAuthentication,
 			nil,
 			Key{AlgorithmEC256, PINPolicyOnce, TouchPolicyNever},
+			false, version{},
 		},
 		{
 			"PINPolicyAlways",
 			SlotAuthentication,
 			nil,
 			Key{AlgorithmEC256, PINPolicyAlways, TouchPolicyNever},
+			false, version{},
 		},
 		{
 			"TouchPolicyAlways",
 			SlotAuthentication,
 			nil,
 			Key{AlgorithmEC256, PINPolicyNever, TouchPolicyAlways},
+			false, version{},
 		},
 		{
 			"TouchPolicyCached",
 			SlotAuthentication,
 			nil,
 			Key{AlgorithmEC256, PINPolicyNever, TouchPolicyCached},
+			false, version{},
 		},
 		{
 			"SlotSignature",
 			SlotSignature,
 			nil,
 			Key{AlgorithmEC256, PINPolicyNever, TouchPolicyCached},
+			false, version{},
 		},
 		{
 			"SlotCardAuthentication",
 			SlotCardAuthentication,
 			nil,
 			Key{AlgorithmEC256, PINPolicyNever, TouchPolicyCached},
+			false, version{},
 		},
 		{
 			"SlotKeyManagement",
 			SlotKeyManagement,
 			nil,
 			Key{AlgorithmEC256, PINPolicyNever, TouchPolicyCached},
+			false, version{},
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
+			if test.long && testing.Short() {
+				t.Skip("skipping test in short mode")
+			}
 			yk, close := newTestYubiKey(t)
 			defer close()
+			testRequiresVersion(t, yk, test.version)
 
 			want := KeyInfo{
 				Algorithm:   test.policy.Algorithm,
@@ -1295,7 +1586,7 @@ func TestPINPolicy(t *testing.T) {
 		yk, close := newTestYubiKey(t)
 		defer close()
 
-		testRequiresVersion(t, yk, 5, 3, 0)
+		testRequiresVersion(t, yk, version53)
 
 		if err := yk.Reset(); err != nil {
 			t.Fatalf("resetting key: %v", err)
@@ -1346,6 +1637,12 @@ func ephemeralKey(t *testing.T, alg Algorithm) privateKey {
 		key, err = rsa.GenerateKey(rand.Reader, 1024)
 	case AlgorithmRSA2048:
 		key, err = rsa.GenerateKey(rand.Reader, 2048)
+	case AlgorithmRSA3072:
+		key, err = rsa.GenerateKey(rand.Reader, 3072)
+	case AlgorithmRSA4096:
+		key, err = rsa.GenerateKey(rand.Reader, 4096)
+	case AlgorithmX25519:
+		key, err = ecdh.X25519().GenerateKey(rand.Reader)
 	default:
 		t.Fatalf("ephemeral key: unknown algorithm %d", alg)
 	}
