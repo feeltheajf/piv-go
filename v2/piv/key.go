@@ -33,11 +33,7 @@ import (
 	"strconv"
 	"strings"
 
-<<<<<<< HEAD:piv/key.go
-	rsafork "github.com/feeltheajf/piv-go/third_party/rsa"
-=======
-	rsafork "github.com/go-piv/piv-go/v2/third_party/rsa"
->>>>>>> 2fae46569ad594c2c4bdd57f696967ac396e1d5e:v2/piv/key.go
+	rsafork "github.com/feeltheajf/piv-go/v2/third_party/rsa"
 )
 
 // errMismatchingAlgorithms is returned when a cryptographic operation

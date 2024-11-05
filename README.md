@@ -2,7 +2,7 @@ This is not an officially supported Google product
 
 # A Go YubiKey PIV implementation
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/go-piv/piv-go/v2/piv.svg)](https://pkg.go.dev/github.com/go-piv/piv-go/v2/piv)
+[![Go Reference](https://pkg.go.dev/badge/github.com/feeltheajf/piv-go/v2/piv.svg)](https://pkg.go.dev/github.com/feeltheajf/piv-go/v2/piv)
 
 YubiKeys implement the PIV specification for managing smart card certificates.
 This applet is a simpler alternative to GPG for managing asymmetric keys on a
@@ -19,7 +19,7 @@ V2 of this package was released in 2024 to support newer kinds of management
 keys, and is now the default branch for new features. The import path is:
 
 ```
-import "github.com/go-piv/piv-go/v2/piv"
+import "github.com/feeltheajf/piv-go/v2/piv"
 ```
 
 ## Examples
