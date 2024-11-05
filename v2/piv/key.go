@@ -758,7 +758,7 @@ func (yk *YubiKey) SetCertificate(key []byte, slot Slot, cert *x509.Certificate)
 	if err := ykStoreCertificate(yk.tx, slot, cert); err != nil {
 		return err
 	}
-	return ykSetCardID(yk.tx, key, &CardID{GUID: generateGUID()})
+	return ykSetCardID(yk.tx, key, &CardID{GUID: generateGUID()}, yk.version)
 }
 
 func ykStoreCertificate(tx *scTx, slot Slot, cert *x509.Certificate) error {

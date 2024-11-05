@@ -288,10 +288,10 @@ func ykPINRetries(tx *scTx) (int, error) {
 // and resetting the PIN, PUK, and Management Key to their default values. This
 // does NOT affect data on other applets, such as GPG or U2F.
 func (yk *YubiKey) Reset() error {
-	return ykReset(yk.tx, yk.rand)
+	return ykReset(yk.tx, yk.rand, yk.version)
 }
 
-func ykReset(tx *scTx, r io.Reader) error {
+func ykReset(tx *scTx, r io.Reader, v *version) error {
 	// Reset only works if both the PIN and PUK are blocked. Before resetting,
 	// try the wrong PIN and PUK multiple times to block them.
 
@@ -343,7 +343,7 @@ func ykReset(tx *scTx, r io.Reader) error {
 		return fmt.Errorf("reseting yubikey: %w", err)
 	}
 
-	if err := ykSetCardID(tx, DefaultManagementKey, &CardID{GUID: generateGUID()}); err != nil {
+	if err := ykSetCardID(tx, DefaultManagementKey, &CardID{GUID: generateGUID()}, v); err != nil {
 		return fmt.Errorf("generating chuid: %w", err)
 	}
 	return nil
@@ -1036,11 +1036,11 @@ func ykGetCardID(tx *scTx) (*CardID, error) {
 }
 
 // SetCardID initialize the CHUID card object using a predefined template
-func (yk *YubiKey) SetCardID(key [24]byte, id *CardID) error {
-	return ykSetCardID(yk.tx, key, id)
+func (yk *YubiKey) SetCardID(key []byte, id *CardID) error {
+	return ykSetCardID(yk.tx, key, id, yk.version)
 }
 
-func ykSetCardID(tx *scTx, key [24]byte, id *CardID) error {
+func ykSetCardID(tx *scTx, key []byte, id *CardID, v *version) error {
 
 	id.raw = make([]byte, len(chuidTemplate))
 	copy(id.raw, chuidTemplate)
@@ -1061,7 +1061,7 @@ func ykSetCardID(tx *scTx, key [24]byte, id *CardID) error {
 		data:        data,
 	}
 
-	if err := ykAuthenticate(tx, key, rand.Reader); err != nil {
+	if err := ykAuthenticate(tx, key, rand.Reader, v); err != nil {
 		return fmt.Errorf("authenticating with key: %w", err)
 	}
 
